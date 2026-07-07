@@ -1,93 +1,171 @@
-# :package_description
+# Laravel CSV
 
-[![Latest Version on Packagist](https://img.shields.io/packagist/v/:vendor_slug/:package_slug.svg?style=flat-square)](https://packagist.org/packages/:vendor_slug/:package_slug)
-[![GitHub Tests Action Status](https://github.com/spatie/package-skeleton-laravel/actions/workflows/run-tests.yml/badge.svg)](https://github.com/:vendor_slug/:package_slug/actions?query=workflow%3Arun-tests+branch%3Amain)
-[![GitHub Code Style Action Status](https://github.com/spatie/package-skeleton-laravel/actions/workflows/fix-php-code-style-issues.yml/badge.svg)](https://github.com/:vendor_slug/:package_slug/actions?query=workflow%3A"Fix+PHP+code+style+issues"+branch%3Amain)
-[![Total Downloads](https://img.shields.io/packagist/dt/:vendor_slug/:package_slug.svg?style=flat-square)](https://packagist.org/packages/:vendor_slug/:package_slug)
-<!--delete-->
----
-This repo can be used to scaffold a Laravel package. Follow these steps to get started:
-
-1. Press the "Use this template" button at the top of this repo to create a new repo with the contents of this skeleton.
-2. Run "php ./configure.php" to run a script that will replace all placeholders throughout all the files.
-3. Have fun creating your package.
-4. If you need help creating a package, consider picking up our <a href="https://laravelpackage.training">Laravel Package Training</a> video course.
----
-<!--/delete-->
-This is where your description should go. Limit it to a paragraph or two. Consider adding a small example.
-
-## Support us
-
-[<img src="https://github-ads.s3.eu-central-1.amazonaws.com/:package_name.jpg?t=1" width="419px" />](https://spatie.be/github-ad-click/:package_name)
-
-We invest a lot of resources into creating [best in class open source packages](https://spatie.be/open-source). You can support us by [buying one of our paid products](https://spatie.be/open-source/support-us).
-
-We highly appreciate you sending us a postcard from your hometown, mentioning which of our package(s) you are using. You'll find our address on [our contact page](https://spatie.be/about-us). We publish all received postcards on [our virtual postcard wall](https://spatie.be/open-source/postcards).
+A small Laravel 12+ package for streaming CSV exports and imports without pulling in spreadsheet support.
 
 ## Installation
 
-You can install the package via composer:
-
 ```bash
-composer require :vendor_slug/:package_slug
+composer require langleyfoxall/laravel-csv
 ```
 
-You can publish and run the migrations with:
+Publish config when you need global defaults:
 
 ```bash
-php artisan vendor:publish --tag=":package_slug-migrations"
-php artisan migrate
+php artisan vendor:publish --tag="csv-config"
 ```
 
-You can publish the config file with:
+## Exporting
 
-```bash
-php artisan vendor:publish --tag=":package_slug-config"
+Create an export class with one source concern:
+
+```php
+use App\Models\User;
+use Illuminate\Database\Eloquent\Builder;
+use LangleyFoxall\LaravelCsv\Concerns\FromQuery;
+use LangleyFoxall\LaravelCsv\Concerns\WithHeadings;
+use LangleyFoxall\LaravelCsv\Concerns\WithMapping;
+
+final class UsersExport implements FromQuery, WithHeadings, WithMapping
+{
+    public function query(): Builder
+    {
+        return User::query()->with('company');
+    }
+
+    public function headings(): array
+    {
+        return ['Name', 'Email', 'Company'];
+    }
+
+    public function map(mixed $row): array
+    {
+        return [$row->name, $row->email, $row->company?->name];
+    }
+}
 ```
 
-This is the contents of the published config file:
+Use the facade:
+
+```php
+use LangleyFoxall\LaravelCsv\Facades\Csv;
+
+return Csv::download(new UsersExport, 'users.csv');
+
+$csv = Csv::raw(new UsersExport);
+
+$stored = Csv::store(new UsersExport, 'exports/users.csv', disk: 's3');
+```
+
+`store()` returns a `StoredCsv`:
+
+```php
+$stored->path();
+$stored->disk();
+$stored->stored();
+```
+
+For Spatie Media Library:
+
+```php
+$stored = Csv::store(new UsersExport, 'exports/users.csv');
+
+$model
+    ->addMediaFromDisk($stored->path(), $stored->disk())
+    ->toMediaCollection('exports');
+```
+
+Or create a temp file:
+
+```php
+$file = Csv::temporaryFile(new UsersExport, 'users.csv');
+
+$model
+    ->addMedia($file->path())
+    ->usingFileName($file->fileName())
+    ->toMediaCollection('exports');
+```
+
+Supported export sources:
+
+- `FromArray`
+- `FromCollection`
+- `FromIterable`
+- `FromQuery`
+
+Query exports stream with `lazyById()` by default. Use `WithChunkReading`, `WithChunkColumn`, and `WithChunkOrder` to control chunk size, column, alias, and ascending/descending order. Query exports without `WithMapping` work, but should use explicit `select([...])` including the chunk column.
+
+## Importing
+
+Use `ToCollection` for whole-file or chunked imports:
+
+```php
+use Illuminate\Support\Collection;
+use LangleyFoxall\LaravelCsv\Concerns\ToCollection;
+use LangleyFoxall\LaravelCsv\Concerns\WithHeadingRow;
+
+final class UsersImport implements ToCollection, WithHeadingRow
+{
+    public function collection(Collection $rows): void
+    {
+        foreach ($rows as $row) {
+            // $row['email']
+        }
+    }
+}
+```
+
+Use `OnEachRow` for streaming row-by-row:
+
+```php
+use Illuminate\Support\Collection;
+use LangleyFoxall\LaravelCsv\Concerns\OnEachRow;
+use LangleyFoxall\LaravelCsv\Concerns\WithHeadingRow;
+
+final class UsersImport implements OnEachRow, WithHeadingRow
+{
+    public function onRow(Collection $row, int $rowNumber): void
+    {
+        // Validate and persist in app code.
+    }
+}
+```
+
+Run import:
+
+```php
+Csv::import(new UsersImport, 'imports/users.csv', disk: 'local');
+```
+
+Import behavior:
+
+- `WithHeadingRow` maps data rows by normalized headings.
+- duplicate normalized headings throw `DuplicateHeading`.
+- empty rows are skipped by default.
+- `PreservesEmptyRows` keeps empty rows.
+- `WithChunkReading` chunks `ToCollection` imports.
+- validation belongs in app code.
+
+## CSV Settings
+
+Default settings live in `config/csv.php`:
 
 ```php
 return [
+    'delimiter' => ',',
+    'enclosure' => '"',
+    'escape_character' => '',
+    'line_ending' => PHP_EOL,
+    'use_bom' => false,
+    'chunk_size' => 1000,
+    'chunk_column' => 'id',
+    'chunk_alias' => null,
 ];
 ```
 
-Optionally, you can publish the views using
-
-```bash
-php artisan vendor:publish --tag=":package_slug-views"
-```
-
-## Usage
-
-```php
-$:variable = new VendorName\Skeleton();
-echo $:variable->echoPhrase('Hello, VendorName!');
-```
+Override per export/import with `WithCustomCsvSettings`.
 
 ## Testing
 
 ```bash
 composer test
 ```
-
-## Changelog
-
-Please see [CHANGELOG](CHANGELOG.md) for more information on what has changed recently.
-
-## Contributing
-
-Please see [CONTRIBUTING](CONTRIBUTING.md) for details.
-
-## Security Vulnerabilities
-
-Please review [our security policy](../../security/policy) on how to report security vulnerabilities.
-
-## Credits
-
-- [:author_name](https://github.com/:author_username)
-- [All Contributors](../../contributors)
-
-## License
-
-The MIT License (MIT). Please see [License File](LICENSE.md) for more information.
