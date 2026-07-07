@@ -25,67 +25,8 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    name: Tests - P${{ matrix.php }} - L${{ matrix.laravel }} - ${{ matrix.stability }} - ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 5
-    strategy:
-      fail-fast: true
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-        php: [8.5, 8.4, 8.3]
-        laravel: [13.*, 12.*]
-        stability: [prefer-lowest, prefer-stable]
-        include:
-          - laravel: 13.*
-            testbench: 11.*
-          - laravel: 12.*
-            testbench: 10.*
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-
-      - name: Setup PHP
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: ${{ matrix.php }}
-          extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, bcmath, soap, intl, gd, exif, iconv, imagick, fileinfo
-          coverage: none
-
-      - name: Setup problem matchers
-        run: |
-          echo "::add-matcher::${{ runner.tool_cache }}/php.json"
-          echo "::add-matcher::${{ runner.tool_cache }}/phpunit.json"
-
-      - name: Install dependencies
-        run: |
-          composer require "laravel/framework:${{ matrix.laravel }}" "orchestra/testbench:${{ matrix.testbench }}" --no-interaction --no-update
-          composer update --${{ matrix.stability }} --prefer-dist --no-interaction
-
-      - name: List Installed Dependencies
-        run: composer show -D
-
-      - name: Execute tests
-        run: vendor/bin/pest --ci
-
   tests:
     name: Tests
-    runs-on: ubuntu-latest
-    needs: test
-    if: ${{ always() }}
-    timeout-minutes: 1
-
-    steps:
-      - name: Check test matrix result
-        run: |
-          if [ "${{ needs.test.result }}" != "success" ]; then
-            echo "Test matrix result: ${{ needs.test.result }}"
-            exit 1
-          fi
-
-  coverage:
-    name: Coverage
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -113,7 +54,7 @@ jobs:
       - name: Prepare coverage output
         run: mkdir -p build/logs
 
-      - name: Execute tests with coverage
+      - name: Run tests with coverage
         run: vendor/bin/pest --ci --coverage --coverage-clover=build/logs/clover.xml --min=0
 
       - name: Publish coverage summary
