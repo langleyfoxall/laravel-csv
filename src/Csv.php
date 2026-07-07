@@ -295,9 +295,7 @@ class Csv
 
     private function combineHeadings(array $headings, array $row): array
     {
-        $values = array_pad($row, count($headings), null);
-
-        return array_combine($headings, array_slice($values, 0, count($headings))) ?: [];
+        return array_combine($headings, array_slice(array_pad($row, count($headings), null), 0, count($headings))) ?: [];
     }
 
     private function stripBomFromFirstValue(array $row): array
