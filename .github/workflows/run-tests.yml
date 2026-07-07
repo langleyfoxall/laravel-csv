@@ -1,6 +1,7 @@
 name: run-tests
 
 on:
+  workflow_dispatch:
   push:
     paths:
       - '**.php'
@@ -20,24 +21,14 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-jobs:
-  test:
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 5
-    strategy:
-      fail-fast: true
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-        php: [8.5, 8.4, 8.3]
-        laravel: [13.*, 12.*]
-        stability: [prefer-lowest, prefer-stable]
-        include:
-          - laravel: 13.*
-            testbench: 11.*
-          - laravel: 12.*
-            testbench: 10.*
+permissions:
+  contents: read
 
-    name: P${{ matrix.php }} - L${{ matrix.laravel }} - ${{ matrix.stability }} - ${{ matrix.os }}
+jobs:
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
 
     steps:
       - name: Checkout code
@@ -46,9 +37,9 @@ jobs:
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: ${{ matrix.php }}
+          php-version: '8.5'
           extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, bcmath, soap, intl, gd, exif, iconv, imagick, fileinfo
-          coverage: none
+          coverage: xdebug
 
       - name: Setup problem matchers
         run: |
@@ -57,11 +48,24 @@ jobs:
 
       - name: Install dependencies
         run: |
-          composer require "laravel/framework:${{ matrix.laravel }}" "orchestra/testbench:${{ matrix.testbench }}" --no-interaction --no-update
-          composer update --${{ matrix.stability }} --prefer-dist --no-interaction
+          composer require "laravel/framework:13.*" "orchestra/testbench:11.*" --no-interaction --no-update
+          composer update --prefer-stable --prefer-dist --no-interaction
 
-      - name: List Installed Dependencies
-        run: composer show -D
+      - name: Prepare coverage output
+        run: mkdir -p build/logs
 
-      - name: Execute tests
-        run: vendor/bin/pest --ci
+      - name: Run tests with coverage
+        run: vendor/bin/pest --ci --coverage --coverage-clover=build/logs/clover.xml --min=0
+
+      - name: Publish coverage summary
+        run: |
+          php -r '
+          $coverage = simplexml_load_file("build/logs/clover.xml");
+          $metrics = $coverage->project->metrics;
+          $covered = (int) $metrics["coveredstatements"];
+          $statements = (int) $metrics["statements"];
+          $percentage = $statements > 0 ? round(($covered / $statements) * 100, 2) : 0.0;
+          $summary = sprintf("## Test coverage\n\n**%.2f%%** statement coverage (%d/%d statements).\n", $percentage, $covered, $statements);
+          file_put_contents(getenv("GITHUB_STEP_SUMMARY"), $summary, FILE_APPEND);
+          printf("Coverage: %.2f%% (%d/%d statements)\n", $percentage, $covered, $statements);
+          '
